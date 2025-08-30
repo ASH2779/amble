@@ -23,7 +23,7 @@ serve(async (req) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: Bearer ${openaiKey},
+        Authorization: `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
@@ -37,14 +37,17 @@ serve(async (req) => {
 
     if (!openAIResponse.ok) {
       const errBody = await openAIResponse.text();
-      throw new Error(OpenAI API error: ${openAIResponse.status} - ${errBody});
+      throw new Error(`OpenAI API error: ${openAIResponse.status} - ${errBody}`);
     }
 
     const result = await openAIResponse.json();
     const reply = result.choices?.[0]?.message?.content || "No reply from AI.";
 
     return new Response(JSON.stringify({ reply }), {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*", // ✅ Fix CORS for frontend
+      },
     });
   } catch (err: any) {
     console.error("Function error:", err);
