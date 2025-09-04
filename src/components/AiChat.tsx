@@ -3,7 +3,10 @@ import React, { useState } from "react";
 
 type Msg = { role: "user" | "assistant" | "system"; content: string };
 
-const STREAMING = true; // set false if you want the simpler non-stream flow first
+const STREAMING = true;
+
+// 👉 put your Supabase project ref here
+const SUPABASE_URL = "https://<your-project-ref>.functions.supabase.co";
 
 export function AiChat() {
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -21,11 +24,14 @@ export function AiChat() {
 
     try {
       if (!STREAMING) {
-        // ---- Non-streaming (easiest baseline) ----
-        const res = await fetch("/functions/v1/ai-chat", {
+        // ---- Non-streaming ----
+        const res = await fetch(`${SUPABASE_URL}/ai-chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: [...messages, newUserMsg], stream: false }),
+          body: JSON.stringify({
+            messages: [...messages, newUserMsg],
+            stream: false,
+          }),
         });
 
         if (!res.ok) throw new Error(await res.text());
@@ -33,11 +39,14 @@ export function AiChat() {
         const content = data?.content ?? "";
         setMessages((m) => [...m, { role: "assistant", content }]);
       } else {
-        // ---- Streaming (consume plain text stream) ----
-        const res = await fetch("/functions/v1/ai-chat", {
+        // ---- Streaming ----
+        const res = await fetch(`${SUPABASE_URL}/ai-chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: [...messages, newUserMsg], stream: true }),
+          body: JSON.stringify({
+            messages: [...messages, newUserMsg],
+            stream: true,
+          }),
         });
         if (!res.ok || !res.body) throw new Error(await res.text());
 
@@ -45,7 +54,6 @@ export function AiChat() {
         const decoder = new TextDecoder();
         let assistantText = "";
 
-        // Add a placeholder assistant message we update as chunks arrive
         setMessages((m) => [...m, { role: "assistant", content: "" }]);
 
         while (true) {
@@ -53,7 +61,6 @@ export function AiChat() {
           if (done) break;
           assistantText += decoder.decode(value, { stream: true });
 
-          // Update the last assistant message
           setMessages((m) => {
             const copy = m.slice();
             const lastIdx = copy.length - 1;
@@ -67,7 +74,10 @@ export function AiChat() {
     } catch (err: any) {
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: `⚠️ Error: ${err?.message || String(err)}` },
+        {
+          role: "assistant",
+          content: `⚠️ Error: ${err?.message || String(err)}`,
+        },
       ]);
     } finally {
       setLoading(false);
@@ -80,7 +90,9 @@ export function AiChat() {
         {messages.map((m, i) => (
           <div
             key={i}
-            className={`mb-2 ${m.role === "user" ? "text-blue-700" : "text-slate-800"}`}
+            className={`mb-2 ${
+              m.role === "user" ? "text-blue-700" : "text-slate-800"
+            }`}
           >
             <b>{m.role}:</b>{" "}
             <span style={{ whiteSpace: "pre-wrap" }}>{m.content}</span>
