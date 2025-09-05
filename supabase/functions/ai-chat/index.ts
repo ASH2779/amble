@@ -6,11 +6,11 @@ type Message = { role: "system" | "user" | "assistant"; content: string };
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Headers": "*", // allow any headers
 };
 
 serve(async (req) => {
-  // CORS preflight
+  // Handle preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
@@ -18,20 +18,29 @@ serve(async (req) => {
   try {
     const apiKey = Deno.env.get("OPENAI_API_KEY");
     if (!apiKey) {
-      return new Response("Missing OPENAI_API_KEY", { status: 500, headers: CORS_HEADERS });
+      return new Response("Missing OPENAI_API_KEY", {
+        status: 500,
+        headers: CORS_HEADERS,
+      });
     }
 
     const contentType = req.headers.get("content-type") || "";
     if (!contentType.includes("application/json")) {
-      return new Response("Use application/json", { status: 415, headers: CORS_HEADERS });
+      return new Response("Use application/json", {
+        status: 415,
+        headers: CORS_HEADERS,
+      });
     }
 
     const body = await req.json();
     const messages: Message[] = body?.messages;
-    const stream: boolean = !!body?.stream; // default: false (safer)
+    const stream: boolean = !!body?.stream;
 
     if (!Array.isArray(messages) || messages.length === 0) {
-      return new Response("Invalid request: missing messages[]", { status: 400, headers: CORS_HEADERS });
+      return new Response("Invalid request: missing messages[]", {
+        status: 400,
+        headers: CORS_HEADERS,
+      });
     }
 
     // Call OpenAI
@@ -42,18 +51,21 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini", // adjust if needed
+        model: "gpt-4o-mini",
         messages,
-        stream,               // stream only if the client asked for it
+        stream,
       }),
     });
 
     if (!openaiRes.ok) {
       const txt = await openaiRes.text();
-      return new Response(`OpenAI error: ${txt}`, { status: 500, headers: CORS_HEADERS });
+      return new Response(`OpenAI error: ${txt}`, {
+        status: 500,
+        headers: CORS_HEADERS,
+      });
     }
 
-    // Non-streaming (simple, reliable)
+    // Non-streaming
     if (!stream) {
       const data = await openaiRes.json();
       const content =
@@ -66,11 +78,14 @@ serve(async (req) => {
       });
     }
 
-    // Streaming requested: convert OpenAI SSE → plain text stream
+    // Streaming
     const encoder = new TextEncoder();
     const reader = openaiRes.body?.getReader();
     if (!reader) {
-      return new Response("No body to stream", { status: 500, headers: CORS_HEADERS });
+      return new Response("No body to stream", {
+        status: 500,
+        headers: CORS_HEADERS,
+      });
     }
 
     const streamOut = new ReadableStream({
@@ -82,15 +97,13 @@ serve(async (req) => {
             if (done) break;
             buffer += new TextDecoder().decode(value, { stream: true });
 
-            // Split by SSE frame delimiter
             const parts = buffer.split("\n\n");
             buffer = parts.pop() || "";
 
             for (const chunk of parts) {
-              // SSE lines typically start with "data: "
               const line = chunk.trim();
               if (!line.startsWith("data:")) continue;
-              const payload = line.slice(5).trim(); // remove "data:"
+              const payload = line.slice(5).trim();
               if (payload === "[DONE]") continue;
 
               try {
@@ -98,7 +111,7 @@ serve(async (req) => {
                 const delta = json?.choices?.[0]?.delta?.content ?? "";
                 if (delta) controller.enqueue(encoder.encode(delta));
               } catch {
-                // ignore parse errors for non-JSON keepalive frames
+                // ignore parse errors
               }
             }
           }
@@ -111,7 +124,6 @@ serve(async (req) => {
       },
     });
 
-    // Note: we return text/plain because we transformed SSE → raw text
     return new Response(streamOut, {
       status: 200,
       headers: { ...CORS_HEADERS, "Content-Type": "text/plain; charset=utf-8" },
