@@ -1,144 +1,137 @@
-import React, { useState } from "react";
+// supabase/functions/ai-chat/index.ts
+import { serve } from "https://deno.land/std/http/server.ts";
 
-type Msg = { role: "user" | "assistant" | "system"; content: string };
+type Message = { role: "system" | "user" | "assistant"; content: string };
 
-export default function AiChat() {
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "*", // allow any headers
+};
 
-  async function sendMessage() {
-    const text = input.trim();
-    if (!text || loading) return;
-
-    // Add user message immediately
-    const newUserMsg: Msg = { role: "user", content: text };
-    setMessages((m) => [...m, newUserMsg]);
-    setInput("");
-    setLoading(true);
-    setError("");
-
-    try {
-      console.log("🚀 Sending message to AI...");
-      
-      // DIRECT OPENAI API CALL
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: "You are a helpful AI assistant. Be concise and friendly." },
-            { role: "user", content: text }
-          ],
-          temperature: 0.7,
-        }),
-      });
-
-      console.log("📡 Response status:", response.status);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("❌ API Error:", errorText);
-        setError(`API Error: ${response.status}`);
-        return;
-      }
-
-      const data = await response.json();
-      console.log("✅ API Response:", data);
-
-      const content = data?.choices?.[0]?.message?.content || "No response from AI";
-      
-      // Add AI response
-      setMessages((m) => [...m, { role: "assistant", content }]);
-    } catch (err: any) {
-      console.error("💥 Fetch error:", err);
-      setError(`Error: ${err?.message || "Network error"}`);
-    } finally {
-      setLoading(false);
-    }
+serve(async (req) => {
+  // Handle preflight
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
 
-  return (
-    <div className="p-6 border-2 border-blue-200 rounded-xl max-w-2xl mx-auto bg-white shadow-lg">
-      <div className="mb-4">
-        <h3 className="text-lg font-semibold text-gray-800 mb-2">💬 AI Assistant</h3>
-        <p className="text-sm text-gray-600">Ask me anything and I'll respond right away!</p>
-      </div>
-      
-      {/* Chat Messages */}
-      <div className="space-y-3 mb-4 h-80 overflow-y-auto bg-gray-50 p-4 rounded-lg border">
-        {messages.length === 0 && (
-          <div className="text-center text-gray-500 py-8">
-            <p>👋 Start a conversation by typing a message below!</p>
-          </div>
-        )}
-        
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${
-            m.role === "user" ? "justify-end" : "justify-start"
-          }`}>
-            <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-              m.role === "user" 
-                ? "bg-blue-500 text-white rounded-br-none" 
-                : "bg-gray-200 text-gray-800 rounded-bl-none"
-            }`}>
-              <div className="text-xs opacity-75 mb-1">
-                {m.role === "user" ? "You" : "AI"}
-              </div>
-              <div>{m.content}</div>
-            </div>
-          </div>
-        ))}
-        
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg rounded-bl-none">
-              <div className="text-xs opacity-75 mb-1">AI</div>
-              <div className="flex items-center">
-                <div className="animate-pulse">🤔 Thinking...</div>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {error && (
-          <div className="flex justify-center">
-            <div className="bg-red-100 text-red-700 px-4 py-2 rounded-lg border border-red-200">
-              <div className="text-sm">⚠️ {error}</div>
-            </div>
-          </div>
-        )}
-      </div>
+  try {
+    const apiKey = Deno.env.get("OPENAI_API_KEY");
+    if (!apiKey) {
+      return new Response("Missing OPENAI_API_KEY", {
+        status: 500,
+        headers: CORS_HEADERS,
+      });
+    }
 
-      {/* Input Area */}
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              sendMessage();
+    const contentType = req.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      return new Response("Use application/json", {
+        status: 415,
+        headers: CORS_HEADERS,
+      });
+    }
+
+    const body = await req.json();
+    const messages: Message[] = body?.messages;
+    const stream: boolean = !!body?.stream;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return new Response("Invalid request: missing messages[]", {
+        status: 400,
+        headers: CORS_HEADERS,
+      });
+    }
+
+    // Call OpenAI
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages,
+        stream,
+      }),
+    });
+
+    if (!openaiRes.ok) {
+      const txt = await openaiRes.text();
+      return new Response(`OpenAI error: ${txt}`, {
+        status: 500,
+        headers: CORS_HEADERS,
+      });
+    }
+
+    // Non-streaming
+    if (!stream) {
+      const data = await openaiRes.json();
+      const content =
+        data?.choices?.[0]?.message?.content ??
+        data?.choices?.[0]?.delta?.content ??
+        "";
+      return new Response(JSON.stringify({ content }), {
+        status: 200,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    // Streaming
+    const encoder = new TextEncoder();
+    const reader = openaiRes.body?.getReader();
+    if (!reader) {
+      return new Response("No body to stream", {
+        status: 500,
+        headers: CORS_HEADERS,
+      });
+    }
+
+    const streamOut = new ReadableStream({
+      async start(controller) {
+        let buffer = "";
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += new TextDecoder().decode(value, { stream: true });
+
+            const parts = buffer.split("\n\n");
+            buffer = parts.pop() || "";
+
+            for (const chunk of parts) {
+              const line = chunk.trim();
+              if (!line.startsWith("data:")) continue;
+              const payload = line.slice(5).trim();
+              if (payload === "[DONE]") continue;
+
+              try {
+                const json = JSON.parse(payload);
+                const delta = json?.choices?.[0]?.delta?.content ?? "";
+                if (delta) controller.enqueue(encoder.encode(delta));
+              } catch {
+                // ignore parse errors
+              }
             }
-          }}
-          disabled={loading}
-          className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-          placeholder="Type your message here..."
-        />
-        <button
-          onClick={sendMessage}
-          disabled={loading || !input.trim()}
-          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-        >
-          {loading ? "..." : "Send"}
-        </button>
-      </div>
-    </div>
-  );
-}
+          }
+          controller.close();
+        } catch (e) {
+          controller.error(e);
+        } finally {
+          reader.releaseLock();
+        }
+      },
+    });
+
+    return new Response(streamOut, {
+      status: 200,
+      headers: { ...CORS_HEADERS, "Content-Type": "text/plain; charset=utf-8" },
+    });
+  } catch (err: any) {
+    return new Response(`Server error: ${err?.message || err}`, {
+      status: 500,
+      headers: CORS_HEADERS,
+    });
+  }
+});
